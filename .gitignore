@@ -1,0 +1,50 @@
+# ---- 构建产物（不跟踪）----
+bin/
+obj/
+publish/
+publish-*/
+_installer_build/
+
+# ---- 安装包 / 打包产物 ----
+*.zip
+*.7z
+*.nupkg
+
+# ---- Visual Studio / Rider ----
+.vs/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+
+# ---- 临时 / 调试 / 截图 ----
+*.log
+*.tmp
+*.bak
+_*.png
+tools/shots/
+
+# ---- 系统 ----
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- 本地测试密钥（绝不入库）----
+tools/.testcode
+
+# ---- Unity 生成物（不跟踪）----
+unity/*/Library/
+unity/*/Temp/
+unity/*/Obj/
+unity/*/Build/
+unity/*/Builds/
+unity/*/Logs/
+unity/*/UserSettings/
+unity/*/*.csproj
+unity/*/*.sln
+unity/*/ProjectSettings/ProjectSettings.asset.bak
+
+# ---- 安装器打包载荷（体积大，不入库）----
+installer/payload/
+installer/bin/
+installer/obj/
