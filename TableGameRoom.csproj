@@ -5,4 +5,13 @@
     <DebugType>none</DebugType><DebugSymbols>false</DebugSymbols>
     <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <!-- installer/ 是独立的安装程序项目，不要编进主程序 -->
+  <ItemGroup>
+    <Compile Remove="installer/**" />
+    <Page Remove="installer/**" />
+    <None Remove="installer/**" />
+    <ApplicationDefinition Remove="installer/**" />
+    <Resource Remove="installer/**" />
+  </ItemGroup>
 </Project>

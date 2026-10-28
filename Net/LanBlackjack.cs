@@ -233,9 +233,22 @@ public partial class MainWindow
         var st = EnsureBj(roomId);
         if (st.Phase != "betting") return;
 
-        // 只为参战且已下注的玩家发牌
+        // 参战玩家默认下注（没主动下注的按底注算），
+        // 否则玩家没点"下注"就会被排除出牌局，看起来像"观战中"
         var playingIds = room.Members.Where(m => m.Playing).Select(m => m.PlayerId).ToHashSet();
-        st.Players.RemoveAll(p => !playingIds.Contains(p.PlayerId) || p.Bet <= 0);
+        st.Players.RemoveAll(p => !playingIds.Contains(p.PlayerId));
+
+        // 为还没下注的参战玩家补上条目（默认底注）
+        foreach (var pid in playingIds)
+        {
+            if (st.Players.All(p => p.PlayerId != pid))
+                st.Players.Add(new LanBjPlayer { PlayerId = pid, Bet = _lanBjBet > 0 ? _lanBjBet : 100 });
+        }
+
+        foreach (var p in st.Players)
+        {
+            if (p.Bet <= 0) p.Bet = _lanBjBet > 0 ? _lanBjBet : 100;
+        }
 
         // AI 补位：按房间设定人数补足虚拟玩家（以「参战真人数」为准，不是「已下注人数」）
         st.Players.RemoveAll(p => p.PlayerId.StartsWith("ai-"));
