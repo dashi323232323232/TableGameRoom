@@ -300,16 +300,14 @@ public partial class MainWindow
                 case "session":
                     if (msg.Session is not null)
                     {
-                        var prev = _session;
                         _session = msg.Session;
                         // 同步自己的房间归属（客户端由主机广播决定）
                         var myRoom = _session.Rooms.FirstOrDefault(r => r.Members.Any(m => m.PlayerId == _myNetId));
                         _myRoomId = myRoom?.Id;
 
-                        // 对局刚开始：自动进入对局页
-                        var nowPlaying = myRoom?.State == "playing";
-                        var wasPlaying = prev?.Rooms.FirstOrDefault(r => r.Id == myRoom?.Id)?.State == "playing";
-                        if (nowPlaying && !wasPlaying && myRoom is not null)
+                        // 房间处于对局中且当前不在对局页 → 进入对局页
+                        // （不要用"状态刚变成 playing"来判定：多次广播会导致错过那一次跃变）
+                        if (myRoom?.State == "playing" && _lanPage != "game")
                         {
                             _lanRoomForGame = myRoom.Id;
                             ShowLanGame();
@@ -364,7 +362,9 @@ public partial class MainWindow
             switch (msg.Type)
             {
                 case "create_room":
-                    CreateRoomAsHost(playerId);
+                    // 优先用消息里指定的玩法（安卓端建房时会带 GameKey）；
+                    // 没有则回退到 UI 上预选的玩法。
+                    CreateRoomAsHost(playerId, msg.GameKey);
                     break;
                 case "join_room":
                     JoinRoomAsHost(playerId, msg.RoomId ?? "");
@@ -438,6 +438,15 @@ public partial class MainWindow
                                 var max = GameMaxPlayers(msg.GameKey);
                                 var pc = room.Members.Count(m => m.Playing);
                                 room.Seats = Math.Clamp(room.Seats, Math.Max(2, Math.Min(pc, max)), max);
+
+                                // 换游戏 = 放弃当前对局，房间回到等待状态，
+                                // 否则会卡在"对局进行中"再也开不了新局
+                                room.State = "waiting";
+                                _lanBj = null;
+                                _lanPoker = null;
+                                _lanThree = null;
+                                _lanLiar = null;
+                                _lanRoomForGame = null;
                             }
                             if (msg.Data is not null)
                             {
@@ -585,19 +594,25 @@ public partial class MainWindow
         });
     }
 
-    private void CreateRoomAsHost(string playerId)
+    private void CreateRoomAsHost(string playerId, string? gameKey = null)
     {
         if (_lanServer is null) return;
         var player = _lanServer.State.Players.FirstOrDefault(p => p.Id == playerId);
         var name = player?.Name ?? "玩家";
+
+        // 玩法优先级：消息里指定的 > UI 预选的 > 默认 21 点
+        var key = !string.IsNullOrWhiteSpace(gameKey) ? gameKey! : (_pendingRoomGame ?? "blackjack");
+        if (key is not ("blackjack" or "poker" or "three" or "liar")) key = "blackjack";   // 未知玩法回退
+
         var room = new RoomInfo
         {
             Id = Guid.NewGuid().ToString("N")[..8],
             Name = $"{name} 的房间",
             HostId = playerId,
             Members = [new RoomMember { PlayerId = playerId, Playing = true, Unlimited = true }],
-            GameKey = _pendingRoomGame ?? "blackjack",
-            State = "waiting"
+            GameKey = key,
+            State = "waiting",
+            Seats = Math.Clamp(3, 2, GameMaxPlayers(key))
         };
         _pendingRoomGame = null;
         _lanServer.State.Rooms.Add(room);
