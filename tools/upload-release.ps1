@@ -15,7 +15,7 @@ param(
     [string]$Repo = "",
     [string]$Name = "",
     [string]$Notes = "",
-    [string]$Proxy = "http://127.0.0.1:7897"
+    [string]$Proxy = ""   # 留空=直连；需要代理时传 -Proxy "http://127.0.0.1:7897"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -55,10 +55,10 @@ function Invoke-GhApi {
         Method      = $Method
         Uri         = $Uri
         Headers     = $headers
-        Proxy       = $Proxy
         TimeoutSec  = 120
         ErrorAction = 'Stop'
     }
+    if (-not [string]::IsNullOrWhiteSpace($Proxy)) { $params.Proxy = $Proxy }
     if ($Body) {
         $params.Body = $Body
         $params.ContentType = $ContentType
@@ -130,8 +130,16 @@ $uploadHeaders = @{
     "X-GitHub-Api-Version" = "2022-11-28"
 }
 
-$asset = Invoke-RestMethod -Method POST -Uri $uploadUrl -Headers $uploadHeaders `
-    -Body $bytes -Proxy $Proxy -TimeoutSec 1800
+$uploadParams = @{
+    Method     = 'POST'
+    Uri        = $uploadUrl
+    Headers    = $uploadHeaders
+    Body       = $bytes
+    TimeoutSec = 1800
+}
+if (-not [string]::IsNullOrWhiteSpace($Proxy)) { $uploadParams.Proxy = $Proxy }
+
+$asset = Invoke-RestMethod @uploadParams
 
 Write-Host ""
 Write-Host "✓ 上传成功"

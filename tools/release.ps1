@@ -16,7 +16,7 @@ param(
     [string]$Message = "",
     [string]$Version = "",
     [int]$KeepLocal = 2,
-    [string]$Proxy = "http://127.0.0.1:7897"
+    [string]$Proxy = ""   # 留空=直连；需要代理时传 -Proxy "http://127.0.0.1:7897"
 )
 
 $ErrorActionPreference = 'Stop'
