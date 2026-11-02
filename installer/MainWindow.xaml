@@ -1,0 +1,52 @@
+<Window x:Class="TableSetup.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="TABLE 游戏厅 安装程序"
+        Height="420" Width="620"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        Background="#F5FAFD">
+    <Grid Margin="32">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="TABLE 虚拟美元游戏厅"
+                   FontSize="28" FontWeight="Bold" Foreground="#202A30" />
+
+        <TextBlock Grid.Row="1" Margin="0,8,0,0"
+                   Text="全部筹码均为虚拟筹码，程序离线运行，不使用数据库、不联网、不涉及真实货币。"
+                   FontSize="13" Foreground="#53636B" TextWrapping="Wrap" />
+
+        <StackPanel Grid.Row="2" Margin="0,24,0,0">
+            <TextBlock Text="安装位置" FontSize="15" FontWeight="SemiBold" Foreground="#202A30" />
+            <Grid Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="PathBox" Grid.Column="0" Padding="8,7" FontSize="13"
+                         VerticalContentAlignment="Center" />
+                <Button Grid.Column="1" Content="浏览…" Margin="8,0,0,0" Padding="16,7"
+                        Click="Browse_Click" />
+            </Grid>
+
+            <CheckBox x:Name="DesktopBox" Content="创建桌面快捷方式" IsChecked="True"
+                      Margin="0,18,0,0" FontSize="13" />
+
+            <CheckBox x:Name="RunBox" Content="安装完成后立即启动" IsChecked="True"
+                      Margin="0,10,0,0" FontSize="13" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+            <TextBlock x:Name="StatusText" VerticalAlignment="Center" Margin="0,0,16,0"
+                       FontSize="12" Foreground="#53636B" />
+            <Button x:Name="InstallBtn" Content="开始安装" Padding="28,10" FontSize="15"
+                    FontWeight="SemiBold" Background="#5B9FD0" Foreground="White"
+                    BorderThickness="0" Click="Install_Click" />
+        </StackPanel>
+    </Grid>
+</Window>
