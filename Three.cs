@@ -599,7 +599,12 @@ public partial class MainWindow
         : _three.PlayerCalls == 0 ? _three.Stake * 3
         : _three.Stake * 2;
 
-    /// <summary>选择加注金额：最低 1.5 倍，也可以自己填。</summary>
+    /// <summary>
+    /// 加注：直接弹输入框。
+    ///
+    /// 之前给了一堆快捷倍数（1.5/2/2.5/3…），但既然能自己填，
+    /// 那些选项就是多余的 —— 直接输入更快也更自由。
+    /// </summary>
     private void ThreeChooseRaise()
     {
         if (!_three.InRound || _three.PlayerFolded || _three.Finished) return;
@@ -608,32 +613,9 @@ public partial class MainWindow
         var minCost = (int)Math.Ceiling(baseCost * MinRaiseMultiplier);
         var cap = Tier.Max ?? int.MaxValue;
 
-        var options = new List<string>();
-        var values = new List<int>();
-
-        foreach (var m in new[] { 1.5, 2, 2.5, 3, 4, 5 })
-        {
-            var cost = (int)Math.Round(baseCost * m);
-            if (cost < minCost || cost > cap) continue;
-            options.Add($"{m:0.#} 倍 · ${cost:N0}");
-            values.Add(cost);
-        }
-
-        options.Add($"自定义金额（最低 ${minCost:N0}）");
-        values.Add(-1);
-
-        var picked = Choose("选择加注金额", options);
-        if (picked < 0 || picked >= values.Count) return;
-
-        if (values[picked] > 0)
-        {
-            ThreeRaiseTo(values[picked]);
-            return;
-        }
-
-        // 自定义输入
-        var input = AskText("自定义加注金额",
-            $"请输入金额（最低 ${minCost:N0}，上限 {(Tier.Max is int c ? $"${c:N0}" : "无上限")}）",
+        var input = AskText("加注金额",
+            $"跟注额 ${baseCost:N0}　最低 ${minCost:N0}（{MinRaiseMultiplier:0.#} 倍）　" +
+            $"上限 {(Tier.Max is int c ? $"${c:N0}" : "无上限")}",
             minCost.ToString());
 
         if (!int.TryParse(input?.Trim(), out var amount)) return;
