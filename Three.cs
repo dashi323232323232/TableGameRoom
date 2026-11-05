@@ -19,6 +19,15 @@ public sealed class ThreeSeat
     public double CalculationNoise { get; set; }
     public double EffectiveTier { get; set; } = 1;
     public double BluffTendency { get; set; }
+
+    /// <summary>本局是否已经决定「继续跟」。一旦为 true 就不再重新掷骰。</summary>
+    public bool Staying { get; set; }
+
+    /// <summary>本局是否看过牌。闷牌跟注只要 1 倍，看牌后 3 倍 / 2 倍。</summary>
+    public bool Looked { get; set; }
+
+    /// <summary>本轮具体做了什么（「加注 $200」这种），显示在座位上。</summary>
+    public string LastAction { get; set; } = "";
 }
 
 public sealed class ThreeState
@@ -37,6 +46,12 @@ public sealed class ThreeState
 
     /// <summary>本局已进行的轮数（玩家每次跟/加算一轮）。</summary>
     public int Rounds;
+
+    /// <summary>玩家本轮做了什么（「跟注 $200」这种）。</summary>
+    public string PlayerAction = "";
+
+    /// <summary>玩家看牌后已经跟过几轮（用于 3 倍 / 2 倍规则）。</summary>
+    public int PlayerCalls;
 
     public readonly List<Card> Player = [];
     public readonly List<ThreeSeat> Seats = [];
@@ -110,7 +125,9 @@ public partial class MainWindow
                 // 观战中活跃AI亮牌更直观
                 if (_three.Spectating && !seat.Folded) hide = false;
                 if (_three.Finished) hide = !seat.Revealed;
-                v = ThreeSeatView(seat.Name, seat.Emoji, seat.Cards, hide, seat.Folded ? "已弃牌" : seat.Status, seat.Committed, seat.EffectiveTier);
+                v = ThreeSeatView(seat.Name, seat.Emoji, seat.Cards, hide,
+                    seat.Folded ? "已弃牌" : seat.Status, seat.Committed, seat.EffectiveTier,
+                    seat.Looked, seat.Folded, seat.LastAction);
                 if (seat.Folded) v.Opacity = 0.72;
             }
             v.Width = seatW;
@@ -123,7 +140,10 @@ public partial class MainWindow
         var playerHide = !_three.Seen && !_three.Finished && !_three.PlayerFolded;
         if (_three.PlayerFolded && !_three.Finished) playerHide = true;
         var playerStatus = _three.PlayerFolded ? "已弃牌·观战中" : _three.Seen ? $"已看牌 · {(_three.Player.Count == 3 ? ThreeScore.Name(ThreeScore.Of(_three.Player)) : "—")}" : "未看牌";
-        var playerSeat = ThreeSeatView(_three.PlayerFolded ? "你（观战）" : "你", _three.PlayerFolded ? "🚫" : _three.Seen ? "😄" : "😐", _three.Player, playerHide, playerStatus, _three.PlayerCommitted, 0);
+        var playerSeat = ThreeSeatView(_three.PlayerFolded ? "你（观战）" : "你",
+            _three.PlayerFolded ? "🚫" : _three.Seen ? "😄" : "😐",
+            _three.Player, playerHide, playerStatus, _three.PlayerCommitted, 0,
+            _three.Seen, _three.PlayerFolded, _three.PlayerAction);
         playerSeat.Width = seatW;
         playerSeat.BorderBrush = _three.PlayerFolded ? PanelBorder : Accent;
         playerSeat.BorderThickness = new Thickness(_three.PlayerFolded ? 1 : 1.2);
@@ -275,7 +295,7 @@ public partial class MainWindow
             if (_threeSeatTimers.TryGetValue(s.Name, out var b)) SeatTimer.Hide(b.Bubble);
     }
 
-    private Border ThreeSeatView(string name, string emoji, IReadOnlyList<Card> cards, bool hidden, string status, int committed, double effTier = 0)
+    private Border ThreeSeatView(string name, string emoji, IReadOnlyList<Card> cards, bool hidden, string status, int committed, double effTier = 0, bool looked = false, bool folded = false, string lastAction = "")
     {
         var stack = new StackPanel { Margin = new Thickness(2), HorizontalAlignment = HorizontalAlignment.Center };
         // 头顶倒计时气泡
@@ -284,16 +304,27 @@ public partial class MainWindow
         _threeSeatTimers[name] = (bubble, bubbleText);
 
         var tierLabel = effTier > 0 ? $" {effTier:0.0}" : "";
-        stack.Children.Add(T($"{name}{tierLabel} {emoji}", 11));
+        // 名字后面标出看牌状态，玩家能一眼看出谁看了牌
+        var lookTag = !folded && cards.Count > 0 ? (looked ? " · 已看牌" : " · 未看牌") : "";
+        stack.Children.Add(T($"{name}{tierLabel} {emoji}{lookTag}", 11));
         var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
         if (cards.Count == 0) row.Children.Add(T("未发牌", 10, Muted));
         foreach (var card in cards) row.Children.Add(CardView.Create(card, hidden, compact: true));
         stack.Children.Add(row);
-        var stakeRow = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
-        stakeRow.Children.Add(T(status, 9, Muted));
-        if (committed > 0) stakeRow.Children.Add(ChipVisual.Create(committed));
-        stack.Children.Add(stakeRow);
-        stack.Children.Add(T($"已下注 ${committed:N0}", 9));
+
+        // 本轮动作优先显示（「加注 $200」这种），否则退回状态
+        var actionText = folded ? "已弃牌"
+            : !string.IsNullOrEmpty(lastAction) ? lastAction
+            : committed > 0 ? $"{status} · ${committed:N0}"
+            : status;
+
+        var actionColor = folded ? Muted
+            : lastAction.StartsWith("加注") ? new SolidColorBrush(Color.FromRgb(192, 57, 43))
+            : lastAction.StartsWith("跟注") || lastAction.Contains("跟注") ? Accent
+            : Muted;
+
+        stack.Children.Add(T(actionText, 9, actionColor));
+        stack.Children.Add(T($"累计 ${committed:N0}", 9, Muted));
 
         return new Border
         {
@@ -338,6 +369,8 @@ public partial class MainWindow
         _three.Winner = "";
         _three.Log = "";
         _three.Rounds = 0;
+        _three.PlayerAction = "";
+        _three.PlayerCalls = 0;
 
         var baseTier = _tierIndex + 1;
         for (var i = 0; i < players - 1; i++)
@@ -397,80 +430,84 @@ public partial class MainWindow
 
     private bool AiThreeKeeps(ThreeSeat seat, int playerAction)
     {
+        // 已经表态过「跟」，本局不再反悔。
+        // 之前每轮独立重掷，玩家跟 3 轮后每个 AI 被抽掉的概率接近 93%，
+        // 6 人桌几乎必然全灭 —— 和安卓端同一个问题。
+        if (seat.Staying) return true;
+
         var score = ThreeScore.Of(seat.Cards);
         var category = (int)(score / 1_000_000L);
         var eff = seat.EffectiveTier;
         var tierIndex = (int)Math.Round(Math.Clamp(eff - 1, 0, 6));
         var strength = AiTuning.Strength(tierIndex);
 
-        // 1) 查表概率（低档主要依赖，直观但粗糙）
+        // 1) 闷牌几乎必跟：没看牌时只要 1 倍底注，很便宜
+        if (!seat.Looked)
+        {
+            var blindFold = 0.04;
+            if (playerAction == 2) blindFold += 0.12;
+            return _rng.NextDouble() >= blindFold;
+        }
+
+        // 2) 看牌后按牌型定基准
         double tableProb;
         switch (category)
         {
-            case 5: tableProb = 0.96; break; // 同花顺
-            case 4: tableProb = 0.94; break; // 豹子
-            case 3: tableProb = 0.78; break; // 顺子
-            case 2: tableProb = 0.66; break; // 同花
+            case 5: tableProb = 0.98; break; // 同花顺
+            case 4: tableProb = 0.96; break; // 豹子
+            case 3: tableProb = 0.90; break; // 顺子
+            case 2: tableProb = 0.84; break; // 同花
             case 1:
                 {
-                    // 对子：看对子大小
                     var pairRank = GetThreePairRank(seat.Cards);
-                    tableProb = 0.52 + (pairRank - 7) * 0.03; // A对约0.73, 小对约0.40
+                    tableProb = 0.62 + (pairRank - 7) * 0.025;
                     break;
                 }
             default:
                 {
                     var high = seat.Cards.Max(c => c.Rank);
-                    tableProb = 0.28 + (high - 7) * 0.022; // A高~0.43, 小牌~0.18
+                    tableProb = 0.40 + (high - 7) * 0.040;
                     break;
                 }
         }
 
         // 风险容忍：高风险更愿意用弱牌跟
-        tableProb += (seat.RiskTolerance - 0.5) * 0.10;
-        // 低档向 0.45 回归（行为更随机）
-        if (strength < 0.5) tableProb = 0.45 + (tableProb - 0.45) * (0.55 + strength * 0.9);
+        tableProb += (seat.RiskTolerance - 0.5) * 0.12;
 
-        // 施压：玩家加注时降概率（低档更怕，高档几乎不怕），连续变化
+        // 低档向 0.55 回归（幅度小，别把所有牌型拉平）
+        if (strength < 0.5) tableProb = 0.55 + (tableProb - 0.55) * (0.75 + strength * 0.5);
+
+        // 施压：玩家加注时降概率
         double pressure = 0;
-        if (playerAction == 2) pressure += AiTuning.Lerp(0.22, 0.05, strength);
-        pressure *= 1.10 - seat.PressureResistance * 0.55;
+        if (playerAction == 2) pressure = AiTuning.Lerp(0.18, 0.04, strength) * (1.10 - seat.PressureResistance * 0.55);
         tableProb -= pressure;
 
         tableProb += (_rng.NextDouble() - 0.5) * seat.CalculationNoise;
-        tableProb = Math.Clamp(tableProb, 0.05, 0.98);
+        tableProb = Math.Clamp(tableProb, 0.05, 0.97);
 
-        // 2) 真实胜率（高档主要依赖，准确但耗算力）
-        // 模拟次数按档位平滑递增，低档几乎不模拟，高档充分模拟。
-        var liveOpponents = _three.Seats.Count(s => !s.Folded && !ReferenceEquals(s, seat)) + (_three.PlayerFolded ? 0 : 1);
-        if (liveOpponents < 1) liveOpponents = 1;
-        var simTrials = (int)Math.Round(AiTuning.Lerp(0, 2400, strength * strength));
-        double winRateProb;
-        if (simTrials < 30)
+        // 3) 真实胜率（高档才模拟）
+        var simTrials = (int)Math.Round(AiTuning.Lerp(0, 2000, strength * strength));
+        double winRateProb = tableProb;
+        if (simTrials >= 30)
         {
-            // 低档不做模拟，直接用查表结果
-            winRateProb = tableProb;
-        }
-        else
-        {
+            var liveOpponents = _three.Seats.Count(s => !s.Folded && !ReferenceEquals(s, seat)) + (_three.PlayerFolded ? 0 : 1);
+            if (liveOpponents < 1) liveOpponents = 1;
+
             var winRate = EstimateThreeWinRate(seat.Cards, liveOpponents, simTrials);
             var callCost = Math.Max(1, _three.Stake);
             var potOdds = callCost / (double)(_three.TablePot + callCost);
-            var required = potOdds * 0.9 + 0.02;
-            if (playerAction == 2) required += 0.06;
-            // 胜率映射为「跟注概率」：高于所需胜率则倾向跟注
-            winRateProb = winRate >= required ? Math.Clamp(0.55 + (winRate - required) * 1.5, 0, 0.99)
-                                              : Math.Clamp(0.55 - (required - winRate) * 1.5, 0.02, 0.55);
+            var required = potOdds * 0.85;
+            winRateProb = Math.Clamp(tableProb + (winRate - required) * 1.2, 0.05, 0.97);
         }
 
-        // 3) 按档位连续混合：低档偏查表，高档偏真实胜率
         var finalProb = AiTuning.BlendThree(tableProb, winRateProb, tierIndex);
+        finalProb = Math.Clamp(finalProb, 0.05, 0.97);
 
-        // 弱牌诈唬（概率随档位下降，由 seat.BluffTendency 控制）
-        if (category <= 1 && _rng.NextDouble() < seat.BluffTendency)
-            return true;
+        var keeps = _rng.NextDouble() < finalProb;
 
-        return _rng.NextDouble() < Math.Clamp(finalProb, 0.03, 0.99);
+        // 看牌后决定跟就锁定，本局不再重掷
+        if (keeps) seat.Staying = true;
+        return keeps;
     }
 
     /// <summary>
@@ -523,8 +560,21 @@ public partial class MainWindow
     private async void ThreePlayerBet(int action)
     {
         if (!_three.InRound || _three.PlayerFolded || _three.Finished || _aiThinking) return;
-        var amount = action == 1 ? _three.Stake : _three.Stake * 2;
-        if (Tier.Max is not null && amount > Tier.Max.Value)
+
+        // 跟注额按炸金花规则：
+        //   闷牌（没看牌）     → 1 倍底注
+        //   看牌后的第一次跟注  → 3 倍底注
+        //   看牌之后的每轮      → 2 倍底注
+        var amount = action switch
+        {
+            0 => 0,                                       // 弃牌不花钱
+            1 => !_three.Seen ? _three.Stake
+                 : _three.PlayerCalls == 0 ? _three.Stake * 3
+                 : _three.Stake * 2,
+            _ => _three.Stake * 2                          // 加注
+        };
+
+        if (action != 0 && Tier.Max is not null && amount > Tier.Max.Value)
         {
             Msg($"当前档位单次下注上限 ${Tier.Max.Value:N0}，本次需要 ${amount:N0}。");
             return;
@@ -543,6 +593,18 @@ public partial class MainWindow
         CommitThree(amount);
         if (action == 2) _three.Stake *= 2;
         _three.Rounds++;
+        if (action == 1) _three.PlayerCalls++;
+
+        // 座位卡片上直接显示玩家做了什么
+        _three.PlayerAction = action switch
+        {
+            0 => "已弃牌",
+            1 => !_three.Seen ? $"闷牌跟注 ${amount:N0}"
+                 : _three.PlayerCalls == 1 ? $"看牌首轮 ${amount:N0}"
+                 : $"跟注 ${amount:N0}",
+            _ => $"加注 ${amount:N0}"
+        };
+
         _three.Log = action == 1 ? $"你跟注 ${amount:N0}。" : $"你加注 ${amount:N0}。";
 
         // 玩家不在行动，停掉自己的倒计时
@@ -560,21 +622,31 @@ public partial class MainWindow
                 $"{seat.Name} 正在考虑是否跟注…");
             HideAllThreeTimers();
 
+            // 闷牌先看牌（真实牌局里 AI 也会先看清楚再决定）
+            if (!seat.Looked && _rng.NextDouble() < 0.75) seat.Looked = true;
+
+            // 跟注额：闷牌 1 倍，看牌后 3 倍 / 2 倍
+            var seatCall = !seat.Looked ? _three.Stake
+                         : seat.Committed <= _three.Stake ? _three.Stake * 3
+                         : _three.Stake * 2;
+
             // 仅用自己的牌评估，不偷看玩家或其他电脑底牌
             var keeps = AiThreeKeeps(seat, action);
             if (keeps)
             {
-                seat.Committed += _three.Stake;
-                _three.TablePot += _three.Stake;
+                seat.Committed += seatCall;
+                _three.TablePot += seatCall;
                 seat.Status = "跟注";
+                seat.LastAction = $"跟注 ${seatCall:N0}";
                 var cat = (int)(ThreeScore.Of(seat.Cards) / 1_000_000L);
                 seat.Emoji = cat >= 3 ? "😄" : cat == 0 ? "😐" : "😞";
-                _three.Log += $" {seat.Name}({seat.EffectiveTier:0.0}) 跟注 ${_three.Stake:N0}。";
+                _three.Log += $" {seat.Name}({seat.EffectiveTier:0.0}) 跟注 ${seatCall:N0}。";
             }
             else
             {
                 seat.Folded = true;
                 seat.Status = "弃牌";
+                seat.LastAction = "已弃牌";
                 seat.Emoji = "😞";
                 _three.Log += $" {seat.Name}({seat.EffectiveTier:0.0}) 弃牌。";
             }
