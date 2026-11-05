@@ -30,7 +30,7 @@ internal static class MultiInstanceGate
 
     private static readonly string[] HashParts =
     [
-        "oncC3cFEff4=", "Ni/tE+2DBZk=", "RpnMJrbKU7I=", "XV+ow1Y7xe4="
+        "MkMbXDk0AsI=", "dDeXYeckxP4=", "6JIrH/hF+Eg=", "t8QmTHWP4yU="
     ];
 
     // 与生成脚本一致的掩码 / 段序

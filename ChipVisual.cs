@@ -17,31 +17,80 @@ public static class ChipVisual
         (1, Color.FromRgb(231, 231, 219))
     ];
 
+    /// <summary>
+    /// 创建一堆筹码。
+    ///
+    /// 关键：**不跨面额凑数**。之前用贪心法把 500 直接拆成 1 枚 500，
+    /// 5 个人各下 100 的底池 $500 看起来像「一个 500 的筹码」，很怪。
+    ///
+    /// 现在以「基准面额」为单位：5×100 就是 5 枚 100，堆成 3 摞。
+    /// 基准面额取不超过金额的最大面额，且保证枚数不至于爆炸。
+    /// </summary>
     public static FrameworkElement Create(int amount)
     {
         var pile = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Height = 34 };
         if (amount <= 0) return pile;
 
-        // Represent the exact total with bounded stacks, distributing each denomination across a few stacks.
-        var remaining = amount;
-        var stackIndex = 0;
-        foreach (var (value, color) in Denominations)
+        // 选出基准面额：从大到小找第一个「枚数合理」的
+        var baseValue = 1;
+        foreach (var (value, _) in Denominations)
         {
-            var pieces = remaining / value;
-            remaining %= value;
-            if (pieces == 0) continue;
-            var visibleStacks = (int)Math.Min(3, pieces);
-            var eachCount = pieces / visibleStacks;
-            var extra = pieces % visibleStacks;
-            for (var i = 0; i < visibleStacks; i++)
+            if (value > amount) continue;
+            // 用这个面额表示时，枚数不超过 30（3 摞 × 10 枚）就用它
+            if (amount / value <= 30)
             {
-                var stack = MakeStack(value, color, (int)(eachCount + (i < extra ? 1 : 0)));
-                stack.Margin = new Thickness(stackIndex++ == 0 ? 0 : -8, 0, 0, 0);
-                pile.Children.Add(stack);
+                baseValue = value;
+                break;
             }
         }
-        pile.ToolTip = $"精确合计 ${amount:N0}";
+
+        var baseColor = ColorFor(baseValue);
+        var pieces = Math.Max(1, amount / baseValue);
+        var remainder = amount % baseValue;
+
+        var stackIndex = 0;
+        var visibleStacks = (int)Math.Min(3, pieces);
+        var eachCount = pieces / visibleStacks;
+        var extra = pieces % visibleStacks;
+
+        for (var i = 0; i < visibleStacks; i++)
+        {
+            var count = eachCount + (i < extra ? 1 : 0);
+            if (count <= 0) continue;
+
+            var stack = MakeStack(baseValue, baseColor, count);
+            stack.Margin = new Thickness(stackIndex++ == 0 ? 0 : -8, 0, 0, 0);
+            pile.Children.Add(stack);
+        }
+
+        // 余数用一枚更小的面额补齐，保持总额精确
+        if (remainder > 0)
+        {
+            var small = SmallestFor(remainder);
+            var stack = MakeStack(small.Value, small.Color, Math.Max(1, remainder / small.Value));
+            stack.Margin = new Thickness(stackIndex++ == 0 ? 0 : -8, 0, 0, 0);
+            pile.Children.Add(stack);
+        }
+
+        pile.ToolTip = $"精确合计 ${amount:N0}（{pieces} 枚 ${baseValue:N0}" +
+                       (remainder > 0 ? $" + ${remainder:N0}" : "") + "）";
         return pile;
+    }
+
+    /// <summary>金额对应的颜色（找最接近的面额）。</summary>
+    private static Color ColorFor(int value)
+    {
+        foreach (var (v, c) in Denominations)
+            if (v == value) return c;
+        return Color.FromRgb(91, 99, 106);
+    }
+
+    /// <summary>把余数落到不超过它的最大面额上。</summary>
+    private static (int Value, Color Color) SmallestFor(int remainder)
+    {
+        foreach (var (value, color) in Denominations)
+            if (value <= remainder) return (value, color);
+        return (1, Color.FromRgb(231, 231, 219));
     }
 
     private static FrameworkElement MakeStack(int value, Color color, int count)

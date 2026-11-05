@@ -34,6 +34,10 @@ public sealed class ThreeState
     public bool Spectating;
     public string Log = "";
     public string Winner = "";
+
+    /// <summary>本局已进行的轮数（玩家每次跟/加算一轮）。</summary>
+    public int Rounds;
+
     public readonly List<Card> Player = [];
     public readonly List<ThreeSeat> Seats = [];
 }
@@ -45,6 +49,9 @@ public partial class MainWindow
     /// <summary>座位名 → (气泡, 文本)，用于实时更新头顶倒计时。</summary>
     private readonly Dictionary<string, (Border Bubble, TextBlock Text)> _threeSeatTimers = [];
     private SeatTimerDriver? _threeTimer;
+
+    /// <summary>驱动「当前行动电脑」的逐秒倒计时（同时只有一个在跑）。</summary>
+    private SeatTimerDriver? _threeAiTimer;
 
     private void ThreePage()
     {
@@ -234,19 +241,38 @@ public partial class MainWindow
             _threeTimer ??= new SeatTimerDriver();
             _threeTimer.Start(SeatTimer.TurnSeconds,
                 seconds => SeatTimer.Show(me.Bubble, me.Text, seconds),
-                () => SeatTimer.Hide(me.Bubble));
+                () =>
+                {
+                    // 超时不再只是把气泡藏起来 —— 必须给出提示并自动弃牌，
+                    // 否则玩家会卡在一个「倒计时停在 0」的死状态里。
+                    SeatTimer.Hide(me.Bubble);
+                    if (!_three.InRound || _three.Finished || _three.PlayerFolded) return;
+                    _three.Log += " 行动超时，已自动弃牌。";
+                    ThreePlayerBet(0);
+                });
         }
     }
 
-    /// <summary>电脑思考时在对应座位头顶显示倒计时。</summary>
-    private void ShowThreeAiThinking(int stage)
+    /// <summary>电脑思考：只在「当前要行动的那一位」头顶显示倒计时，逐秒递减。</summary>
+    private void ShowThreeAiThinking(ThreeSeat seat, int stage)
     {
-        foreach (var seat in _three.Seats.Where(s => !s.Folded))
-        {
-            if (!_threeSeatTimers.TryGetValue(seat.Name, out var t)) continue;
-            var ms = ThinkTiming.Delay(stage, _three.Stake, Tier.Max);
-            SeatTimer.Show(t.Bubble, t.Text, Math.Max(1, (int)Math.Round(ms / 1000.0)));
-        }
+        if (!_threeSeatTimers.TryGetValue(seat.Name, out var t)) return;
+
+        var ms = ThinkTiming.Delay(stage, _three.Stake, Tier.Max);
+        var seconds = Math.Max(1, (int)Math.Round(ms / 1000.0));
+
+        _threeAiTimer ??= new SeatTimerDriver();
+        _threeAiTimer.Start(seconds,
+            left => SeatTimer.Show(t.Bubble, t.Text, left),
+            () => SeatTimer.Hide(t.Bubble));
+    }
+
+    /// <summary>清掉所有座位头顶的气泡（一次行动结束后调用）。</summary>
+    private void HideAllThreeTimers()
+    {
+        _threeAiTimer?.Stop();
+        foreach (var s in _three.Seats)
+            if (_threeSeatTimers.TryGetValue(s.Name, out var b)) SeatTimer.Hide(b.Bubble);
     }
 
     private Border ThreeSeatView(string name, string emoji, IReadOnlyList<Card> cards, bool hidden, string status, int committed, double effTier = 0)
@@ -311,6 +337,7 @@ public partial class MainWindow
         _three.Spectating = false;
         _three.Winner = "";
         _three.Log = "";
+        _three.Rounds = 0;
 
         var baseTier = _tierIndex + 1;
         for (var i = 0; i < players - 1; i++)
@@ -515,22 +542,24 @@ public partial class MainWindow
 
         CommitThree(amount);
         if (action == 2) _three.Stake *= 2;
+        _three.Rounds++;
         _three.Log = action == 1 ? $"你跟注 ${amount:N0}。" : $"你加注 ${amount:N0}。";
 
-        // 电脑思考（玩家操作即时响应，仅电脑等待）
-        // 玩家不在行动，停掉并隐藏自己的倒计时
+        // 玩家不在行动，停掉自己的倒计时
         _threeTimer?.Stop();
         if (_threeSeatTimers.TryGetValue("你", out var meSeat)) SeatTimer.Hide(meSeat.Bubble);
-        // 在每台电脑头顶显示思考倒计时（时长按档位 + 压力算）
-        ShowThreeAiThinking(4);
-        await AiThink(4, _three.Stake, Tier.Max, "电脑正在考虑是否跟注…");
-        // 思考结束清空电脑气泡
-        foreach (var s in _three.Seats)
-            if (_threeSeatTimers.TryGetValue(s.Name, out var b)) SeatTimer.Hide(b.Bubble);
 
+        // 电脑逐个思考：只有当前这一位头顶显示倒计时，
+        // 结束后立刻在座位上标出它做了什么，不会所有气泡一起跳。
         foreach (var seat in _three.Seats)
         {
             if (seat.Folded) continue;
+
+            ShowThreeAiThinking(seat, 4);
+            await AiThink(4, _three.Stake, Tier.Max,
+                $"{seat.Name} 正在考虑是否跟注…");
+            HideAllThreeTimers();
+
             // 仅用自己的牌评估，不偷看玩家或其他电脑底牌
             var keeps = AiThreeKeeps(seat, action);
             if (keeps)
@@ -549,6 +578,9 @@ public partial class MainWindow
                 seat.Emoji = "😞";
                 _three.Log += $" {seat.Name}({seat.EffectiveTier:0.0}) 弃牌。";
             }
+
+            // 每行动完一位就重绘，玩家能立刻看到这一步的结果
+            ThreePage();
         }
 
         if (_three.Seats.All(s => s.Folded))
@@ -556,6 +588,15 @@ public partial class MainWindow
             FinishThree("全部电脑弃牌");
             return;
         }
+
+        // 轮数封顶：真实炸金花也封顶，否则玩家无限跟注会把 AI 一个个抽干
+        if (_three.Rounds >= 6)
+        {
+            _three.Log += " 已达 6 轮上限，强制摊牌。";
+            ThreeForceShowdown();
+            return;
+        }
+
         ThreePage();
     }
 
@@ -749,6 +790,50 @@ public partial class MainWindow
         }
         _three.Winner = $"{reason}，你赢得底池 ${_three.TablePot:N0}（{mine}）。{details}";
         SettleRound(_three.Stake, _three.TablePot, _three.PlayerCommitted, $"炸金花：{reason} · 赢得 ${_three.TablePot:N0} · {mine}");
+        ThreePage();
+    }
+
+    /// <summary>
+    /// 强制摊牌：亮出所有还在局中的牌，比大小定输赢。
+    /// 轮数封顶时调用，避免「玩家一直跟注 → AI 被反复重掷抽干」。
+    /// </summary>
+    private void ThreeForceShowdown()
+    {
+        _three.InRound = false;
+        _three.Finished = true;
+        _three.Spectating = false;
+        foreach (var seat in _three.Seats) seat.Revealed = true;
+
+        var mine = ThreeScore.Of(_three.Player);
+        var best = mine;
+        var winner = "你";
+
+        foreach (var s in _three.Seats.Where(s => !s.Folded))
+        {
+            var theirs = ThreeScore.Of(s.Cards);
+            if (theirs > best) { best = theirs; winner = s.Name; }
+        }
+
+        var lines = new List<string>();
+        foreach (var s in _three.Seats.Where(s => !s.Folded).OrderByDescending(s => ThreeScore.Of(s.Cards)))
+        {
+            lines.Add($"{s.Name}：{ThreeScore.Name(ThreeScore.Of(s.Cards))}");
+        }
+        var detail = lines.Count > 0 ? " · " + string.Join(" / ", lines) : "";
+
+        if (winner == "你")
+        {
+            _three.Winner = $"摊牌：你以{ThreeScore.Name(mine)}赢得底池 ${_three.TablePot:N0}{detail}";
+            SettleRound(_three.Stake, _three.TablePot, _three.PlayerCommitted,
+                $"炸金花：摊牌胜出（{ThreeScore.Name(mine)}）");
+        }
+        else
+        {
+            _three.Winner = $"摊牌：{winner} 以{ThreeScore.Name(best)}赢得底池 ${_three.TablePot:N0}（你：{ThreeScore.Name(mine)}）{detail}";
+            SettleRound(_three.Stake, 0, _three.PlayerCommitted,
+                $"炸金花：摊牌输给 {winner}（{ThreeScore.Name(best)}）");
+        }
+
         ThreePage();
     }
 }
