@@ -62,7 +62,8 @@ public partial class MainWindow
     private readonly ThreeState _three = new();
 
     /// <summary>座位名 → (气泡, 文本)，用于实时更新头顶倒计时。</summary>
-    private readonly Dictionary<string, (Border Bubble, TextBlock Text)> _threeSeatTimers = [];
+    /// <summary>座位名 → 双计时气泡（行动倒计时 + 真实思考）。</summary>
+    private readonly Dictionary<string, SeatTimer.SeatBubble> _threeSeatTimers = [];
     private SeatTimerDriver? _threeTimer;
 
     /// <summary>驱动「当前行动电脑」的逐秒倒计时（同时只有一个在跑）。</summary>
@@ -250,8 +251,8 @@ public partial class MainWindow
     private void StartThreeSeatTimer()
     {
         _threeTimer?.Stop();
-        foreach (var (_, (bubble, _)) in _threeSeatTimers)
-            SeatTimer.Hide(bubble);
+        foreach (var (_, b) in _threeSeatTimers)
+            SeatTimer.Hide(b.Bubble);
 
         var playerActing = _three.InRound && !_three.Finished && !_three.PlayerFolded;
         if (!playerActing) return;
@@ -260,7 +261,7 @@ public partial class MainWindow
         {
             _threeTimer ??= new SeatTimerDriver();
             _threeTimer.Start(SeatTimer.TurnSeconds,
-                seconds => SeatTimer.Show(me.Bubble, me.Text, seconds),
+                seconds => SeatTimer.ShowTurnOnly(me.Bubble, me.TurnText, seconds),
                 () =>
                 {
                     // 超时不再只是把气泡藏起来 —— 必须给出提示并自动弃牌，
@@ -271,20 +272,6 @@ public partial class MainWindow
                     ThreePlayerBet(0);
                 });
         }
-    }
-
-    /// <summary>电脑思考：只在「当前要行动的那一位」头顶显示倒计时，逐秒递减。</summary>
-    private void ShowThreeAiThinking(ThreeSeat seat, int stage)
-    {
-        if (!_threeSeatTimers.TryGetValue(seat.Name, out var t)) return;
-
-        var ms = ThinkTiming.Delay(stage, _three.Stake, Tier.Max);
-        var seconds = Math.Max(1, (int)Math.Round(ms / 1000.0));
-
-        _threeAiTimer ??= new SeatTimerDriver();
-        _threeAiTimer.Start(seconds,
-            left => SeatTimer.Show(t.Bubble, t.Text, left),
-            () => SeatTimer.Hide(t.Bubble));
     }
 
     /// <summary>清掉所有座位头顶的气泡（一次行动结束后调用）。</summary>
@@ -298,10 +285,10 @@ public partial class MainWindow
     private Border ThreeSeatView(string name, string emoji, IReadOnlyList<Card> cards, bool hidden, string status, int committed, double effTier = 0, bool looked = false, bool folded = false, string lastAction = "", int seatIndex = 0)
     {
         var stack = new StackPanel { Margin = new Thickness(2), HorizontalAlignment = HorizontalAlignment.Center };
-        // 头顶倒计时气泡
-        var bubble = SeatTimer.Create(out var bubbleText);
+        // 头顶双计时气泡（行动倒计时 + 真实思考）
+        var bubble = SeatTimer.Create(out var turnText, out var thinkText);
         stack.Children.Add(bubble);
-        _threeSeatTimers[name] = (bubble, bubbleText);
+        _threeSeatTimers[name] = new SeatTimer.SeatBubble(bubble, turnText, thinkText);
 
         // ---------- 头像 + 名字（横排） ----------
         var head = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
@@ -764,22 +751,19 @@ public partial class MainWindow
         {
             if (seat.Folded) continue;
 
-            ShowThreeAiThinking(seat, 4);
+            // ---------- 第一段：思考（30 秒行动倒计时 + 3~25 秒真实思考同时跑）----------
             await AiThink(4, _three.Stake, Tier.Max,
-                $"{seat.Name} 正在考虑…");
-            HideAllThreeTimers();
+                $"{seat.Name} 正在考虑…", seat.Name, action == 2);
 
-            // 闷牌先看牌（看完再想一轮）
+            // ---------- 决定看牌 → 重置思考时间再想一轮 ----------
             if (!seat.Looked && _rng.NextDouble() < 0.7)
             {
                 seat.Looked = true;
                 seat.LastAction = "看牌";
                 ThreePage();
 
-                ShowThreeAiThinking(seat, 4);
                 await AiThink(4, _three.Stake, Tier.Max,
-                    $"{seat.Name} 看完牌，正在盘算…");
-                HideAllThreeTimers();
+                    $"{seat.Name} 看完牌，正在盘算…", seat.Name, action == 2);
             }
 
             // 跟注额：闷牌 1 倍，看牌后 3 倍 / 2 倍
