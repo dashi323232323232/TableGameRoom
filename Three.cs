@@ -26,6 +26,12 @@ public sealed class ThreeSeat
     /// <summary>本局是否看过牌。闷牌跟注只要 1 倍，看牌后 3 倍 / 2 倍。</summary>
     public bool Looked { get; set; }
 
+    /// <summary>
+    /// 是否已经做过「要不要看牌」的判定。
+    /// 看牌是整局一次的决定，不能每轮重掷 —— 否则几轮下来全员都会看牌。
+    /// </summary>
+    public bool LookDecided { get; set; }
+
     /// <summary>本轮具体做了什么（「加注 $200」这种），显示在座位上。</summary>
     public string LastAction { get; set; } = "";
 }
@@ -738,14 +744,26 @@ public partial class MainWindow
                 $"{seat.Name} 正在考虑…", seat.Name, action == 2);
 
             // ---------- 决定看牌 → 重置思考时间再想一轮 ----------
-            if (!seat.Looked && _rng.NextDouble() < 0.7)
+            // 看牌是**整局一次**的决定，不是每轮重掷。
+            // 之前每轮 `rng < 0.7`，第一轮 70% 看，第二轮剩下的又 70% 看，
+            // 两轮下来几乎全员都看了牌，一个闷的都没有。
+            if (!seat.LookDecided)
             {
-                seat.Looked = true;
-                seat.LastAction = "看牌";
-                ThreePage();
+                seat.LookDecided = true;
 
-                await AiThink(4, _three.Stake, Tier.Max,
-                    $"{seat.Name} 看完牌，正在盘算…", seat.Name, action == 2);
+                // 低档更爱闷牌（省注），高档更愿意花 3 倍看清楚
+                var lookChance = 0.22 + 0.28 * AiTuning.Strength(
+                    (int)Math.Round(Math.Clamp(seat.EffectiveTier - 1, 0, 6)));
+
+                if (_rng.NextDouble() < lookChance)
+                {
+                    seat.Looked = true;
+                    seat.LastAction = "看牌";
+                    ThreePage();
+
+                    await AiThink(4, _three.Stake, Tier.Max,
+                        $"{seat.Name} 看完牌，正在盘算…", seat.Name, action == 2);
+                }
             }
 
             // 跟注额：闷牌 1 倍，看牌后 3 倍 / 2 倍

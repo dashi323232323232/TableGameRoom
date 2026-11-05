@@ -39,7 +39,7 @@ public static class SeatTimer
         var turn = new TextBlock
         {
             Text = "30",
-            FontSize = 11,
+            FontSize = 12,
             FontWeight = FontWeights.Bold,
             Foreground = Brushes.White,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -49,37 +49,19 @@ public static class SeatTimer
 
         var turnBox = new Border
         {
-            Width = 32,
-            Height = 20,
-            CornerRadius = new CornerRadius(10),
+            Width = 38,
+            Height = 22,
+            CornerRadius = new CornerRadius(11),
             Background = new SolidColorBrush(Color.FromRgb(91, 159, 208)),
             BorderBrush = Brushes.White,
-            BorderThickness = new Thickness(1.2),
+            BorderThickness = new Thickness(1.4),
             Child = turn
         };
 
-        var think = new TextBlock
-        {
-            Text = "0s",
-            FontSize = 10,
-            FontWeight = FontWeights.Bold,
-            Foreground = new SolidColorBrush(Color.FromRgb(83, 99, 107)),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
+        // 真实思考时间只在内部逻辑里用，不显示给玩家 ——
+        // 两个数字并排反而让人看不懂哪个是哪个。
+        var think = new TextBlock { Text = "", FontSize = 1, Width = 0, Height = 0 };
         thinkLabel = think;
-
-        var thinkBox = new Border
-        {
-            Width = 30,
-            Height = 20,
-            Margin = new Thickness(3, 0, 0, 0),
-            CornerRadius = new CornerRadius(10),
-            Background = new SolidColorBrush(Color.FromRgb(232, 237, 240)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(83, 99, 107)),
-            BorderThickness = new Thickness(1),
-            Child = think
-        };
 
         var row = new StackPanel
         {
@@ -87,10 +69,9 @@ public static class SeatTimer
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 0, 0, 3),
             Visibility = Visibility.Collapsed,
-            ToolTip = "左：行动倒计时（30 秒）　右：真实思考剩余"
+            ToolTip = "行动倒计时（30 秒）"
         };
         row.Children.Add(turnBox);
-        row.Children.Add(thinkBox);
 
         return row;
     }

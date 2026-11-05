@@ -56,27 +56,21 @@ public partial class MainWindow
 
         try
         {
-            // 逐秒推进两个数字。
-            //
-            // 注意：真实思考只有 3~25 秒，而行动倒计时是 30 秒。
-            // 如果两者都按 1 秒 1 秒地减，倒计时永远走不到 0（最多减到 5），
-            // 玩家会以为卡住了。所以行动倒计时按比例折算：
-            // 思考结束的那一刻，倒计时正好走到 0。
+            // 30 秒行动倒计时真实按秒走（玩家看到的就是 30 → 0）。
+            // 真实思考时间（3~30 秒）是内部逻辑，到点就出结果，
+            // 倒计时剩下的秒数直接收掉 —— 不按比例压缩，那样数字跳得太快。
             var remaining = thinkSeconds;
-            var turnRemaining = (double)turnSeconds;
+            var turnRemaining = turnSeconds;
 
             while (remaining > 0)
             {
                 await Task.Delay(1000);
                 remaining--;
-
-                // 每过 1 秒真实思考，倒计时按 30/thinkSeconds 的比例下降
-                turnRemaining -= turnSeconds / (double)Math.Max(1, thinkSeconds);
+                turnRemaining--;
                 if (turnRemaining < 0) turnRemaining = 0;
 
                 if (bubble is not null)
-                    SeatTimer.Show(bubble, turnLabel, thinkLabel,
-                        (int)Math.Ceiling(turnRemaining), remaining);
+                    SeatTimer.Show(bubble, turnLabel, thinkLabel, turnRemaining, remaining);
             }
         }
         finally
@@ -89,8 +83,8 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 真实思考时间：3~25 秒，压力越大越久。
-    /// 压力 = 轮次进度 + 注额相对档位上限的比例 + 是否被加注。
+    /// 真实思考时间：3~30 秒，压力越大越久。
+    /// 上限取 30 和行动倒计时对齐，思考不会比倒计时还长。
     /// </summary>
     private static int RollThinkSeconds(int stage, int stake, int? tierMax, bool pressured)
     {
@@ -105,13 +99,13 @@ public partial class MainWindow
         var pressure = roundPressure * 0.5 + stakePressure * 0.5;
         if (pressured) pressure = Math.Min(1, pressure + 0.2);
 
-        // 3 秒打底，最高 25 秒
-        var seconds = 3 + (25 - 3) * pressure;
+        // 3 秒打底，最高 30 秒
+        var seconds = 3 + (30 - 3) * pressure;
 
         // ±25% 随机波动
         seconds *= 0.75 + Random.Shared.NextDouble() * 0.5;
 
-        return (int)Math.Clamp(Math.Round(seconds), 3, 25);
+        return (int)Math.Clamp(Math.Round(seconds), 3, 30);
     }
 
     /// <summary>
