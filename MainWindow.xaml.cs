@@ -439,6 +439,14 @@ public partial class MainWindow : Window
 
     private void Msg(string text) => ThemeDialog.ShowInfo(this, text, "提示");
 
+    /// <summary>弹出选项列表，返回选中索引（取消 = -1）。</summary>
+    private int Choose(string title, IReadOnlyList<string> options) =>
+        ChoiceDialog.Choose(this, title, options);
+
+    /// <summary>弹出输入框，返回输入内容（取消 = null）。</summary>
+    private string? AskText(string title, string hint, string initial) =>
+        ChoiceDialog.AskText(this, title, hint, initial);
+
     private void ResetChipState()
     {
         _result = "";

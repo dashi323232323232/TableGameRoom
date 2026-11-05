@@ -127,7 +127,7 @@ public partial class MainWindow
                 if (_three.Finished) hide = !seat.Revealed;
                 v = ThreeSeatView(seat.Name, seat.Emoji, seat.Cards, hide,
                     seat.Folded ? "已弃牌" : seat.Status, seat.Committed, seat.EffectiveTier,
-                    seat.Looked, seat.Folded, seat.LastAction);
+                    seat.Looked, seat.Folded, seat.LastAction, i);
                 if (seat.Folded) v.Opacity = 0.72;
             }
             v.Width = seatW;
@@ -183,8 +183,8 @@ public partial class MainWindow
                 _three.Log = $"你看了牌：{string.Join(" ", _three.Player)} · {ThreeScore.Name(ThreeScore.Of(_three.Player))}。电脑根据你的表情调整策略。";
                 ThreePage();
             }));
-            actions.Children.Add(B($"跟注 ${_three.Stake:N0}", () => ThreePlayerBet(1)));
-            actions.Children.Add(B($"加注 ${_three.Stake * 2:N0}", () => ThreePlayerBet(2)));
+            actions.Children.Add(B($"跟注 ${ThreeCallCost:N0}", () => ThreePlayerBet(1)));
+            actions.Children.Add(B("加注…", ThreeChooseRaise));
             actions.Children.Add(B($"比牌 ${_three.Stake:N0}", ThreeCompare));
             actions.Children.Add(B("弃牌", () =>
             {
@@ -295,7 +295,7 @@ public partial class MainWindow
             if (_threeSeatTimers.TryGetValue(s.Name, out var b)) SeatTimer.Hide(b.Bubble);
     }
 
-    private Border ThreeSeatView(string name, string emoji, IReadOnlyList<Card> cards, bool hidden, string status, int committed, double effTier = 0, bool looked = false, bool folded = false, string lastAction = "")
+    private Border ThreeSeatView(string name, string emoji, IReadOnlyList<Card> cards, bool hidden, string status, int committed, double effTier = 0, bool looked = false, bool folded = false, string lastAction = "", int seatIndex = 0)
     {
         var stack = new StackPanel { Margin = new Thickness(2), HorizontalAlignment = HorizontalAlignment.Center };
         // 头顶倒计时气泡
@@ -303,16 +303,49 @@ public partial class MainWindow
         stack.Children.Add(bubble);
         _threeSeatTimers[name] = (bubble, bubbleText);
 
+        // ---------- 头像 + 名字（横排） ----------
+        var head = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+
+        var avatar = AvatarVisual.Create(emoji, seatIndex, name == "你", 22);
+        avatar.Margin = new Thickness(0, 0, 4, 0);
+        head.Children.Add(avatar);
+
         var tierLabel = effTier > 0 ? $" {effTier:0.0}" : "";
-        // 名字后面标出看牌状态，玩家能一眼看出谁看了牌
-        var lookTag = !folded && cards.Count > 0 ? (looked ? " · 已看牌" : " · 未看牌") : "";
-        stack.Children.Add(T($"{name}{tierLabel} {emoji}{lookTag}", 11));
+
+        // 名字太长就省略，完整内容放 ToolTip（对应安卓端的「显示不下就简略」）
+        var shortName = name.Length <= 5 ? name : name[..5] + "…";
+        var nameText = T($"{shortName}{tierLabel}", 11);
+        nameText.VerticalAlignment = VerticalAlignment.Center;
+        head.Children.Add(nameText);
+
+        // 悬停显示完整信息
+        var fullName = $"{name}{tierLabel}\n表情：{AvatarVisual.MoodLabel(AvatarVisual.FromEmoji(emoji))}";
+        if (looked) fullName += "\n状态：已看牌";
+        else if (!folded && cards.Count > 0) fullName += "\n状态：未看牌（闷牌）";
+        if (committed > 0) fullName += $"\n累计下注：${committed:N0}";
+        if (!string.IsNullOrEmpty(lastAction)) fullName += $"\n本轮：{lastAction}";
+        if (folded) fullName += "\n已弃牌";
+        head.ToolTip = fullName;
+        nameText.ToolTip = fullName;
+        avatar.ToolTip = fullName;
+
+        stack.Children.Add(head);
+
+        // ---------- 看牌状态（单独一行，太挤就只显示图标） ----------
+        if (!folded && cards.Count > 0)
+        {
+            var lookText = T(looked ? "👁 已看" : "🙈 闷牌", 9, looked ? Accent : Muted);
+            lookText.ToolTip = looked ? "这名玩家已经看过自己的牌" : "还没看牌，按闷牌下注";
+            stack.Children.Add(lookText);
+        }
+
+        // ---------- 牌 ----------
         var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
         if (cards.Count == 0) row.Children.Add(T("未发牌", 10, Muted));
         foreach (var card in cards) row.Children.Add(CardView.Create(card, hidden, compact: true));
         stack.Children.Add(row);
 
-        // 本轮动作优先显示（「加注 $200」这种），否则退回状态
+        // ---------- 本轮动作（省略显示 + ToolTip 完整） ----------
         var actionText = folded ? "已弃牌"
             : !string.IsNullOrEmpty(lastAction) ? lastAction
             : committed > 0 ? $"{status} · ${committed:N0}"
@@ -320,10 +353,18 @@ public partial class MainWindow
 
         var actionColor = folded ? Muted
             : lastAction.StartsWith("加注") ? new SolidColorBrush(Color.FromRgb(192, 57, 43))
-            : lastAction.StartsWith("跟注") || lastAction.Contains("跟注") ? Accent
+            : lastAction.Contains("跟注") ? Accent
             : Muted;
 
-        stack.Children.Add(T(actionText, 9, actionColor));
+        // 一行放不下就截断，鼠标悬停看全部
+        var shown = actionText.Length <= 8 ? actionText : actionText[..8] + "…";
+        var actionLabel = T(shown, 9, actionColor);
+        actionLabel.ToolTip = actionText;
+        stack.Children.Add(actionLabel);
+
+        var totalLabel = T($"累计 ${committed:N0}", 9, Muted);
+        totalLabel.ToolTip = $"本局累计下注 ${committed:N0}";
+        stack.Children.Add(totalLabel);
         stack.Children.Add(T($"累计 ${committed:N0}", 9, Muted));
 
         return new Border
@@ -557,6 +598,103 @@ public partial class MainWindow
         return cards.Max(c => c.Rank);
     }
 
+    /// <summary>最低加注倍数。</summary>
+    private const double MinRaiseMultiplier = 1.5;
+
+    /// <summary>
+    /// 本轮跟注要多少。炸金花规则：
+    ///   闷牌（没看牌）     → 1 倍底注
+    ///   看牌后的第一次跟注  → 3 倍底注
+    ///   看牌之后的每轮      → 2 倍底注
+    /// </summary>
+    private int ThreeCallCost =>
+        !_three.Seen ? _three.Stake
+        : _three.PlayerCalls == 0 ? _three.Stake * 3
+        : _three.Stake * 2;
+
+    /// <summary>选择加注金额：最低 1.5 倍，也可以自己填。</summary>
+    private void ThreeChooseRaise()
+    {
+        if (!_three.InRound || _three.PlayerFolded || _three.Finished) return;
+
+        var baseCost = ThreeCallCost;
+        var minCost = (int)Math.Ceiling(baseCost * MinRaiseMultiplier);
+        var cap = Tier.Max ?? int.MaxValue;
+
+        var options = new List<string>();
+        var values = new List<int>();
+
+        foreach (var m in new[] { 1.5, 2, 2.5, 3, 4, 5 })
+        {
+            var cost = (int)Math.Round(baseCost * m);
+            if (cost < minCost || cost > cap) continue;
+            options.Add($"{m:0.#} 倍 · ${cost:N0}");
+            values.Add(cost);
+        }
+
+        options.Add($"自定义金额（最低 ${minCost:N0}）");
+        values.Add(-1);
+
+        var picked = Choose("选择加注金额", options);
+        if (picked < 0 || picked >= values.Count) return;
+
+        if (values[picked] > 0)
+        {
+            ThreeRaiseTo(values[picked]);
+            return;
+        }
+
+        // 自定义输入
+        var input = AskText("自定义加注金额",
+            $"请输入金额（最低 ${minCost:N0}，上限 {(Tier.Max is int c ? $"${c:N0}" : "无上限")}）",
+            minCost.ToString());
+
+        if (!int.TryParse(input?.Trim(), out var amount)) return;
+
+        if (amount < minCost)
+        {
+            Msg($"加注金额不能低于 ${minCost:N0}（{MinRaiseMultiplier:0.#} 倍）。");
+            return;
+        }
+        if (amount > cap)
+        {
+            Msg($"超过档位单次上限 ${cap:N0}。");
+            return;
+        }
+
+        ThreeRaiseTo(amount);
+    }
+
+    /// <summary>按指定金额加注。</summary>
+    private void ThreeRaiseTo(int amount)
+    {
+        if (!_three.InRound || _three.PlayerFolded || _three.Finished) return;
+
+        if (Tier.Max is not null && amount > Tier.Max.Value)
+        {
+            Msg($"当前档位单次下注上限 ${Tier.Max.Value:N0}。");
+            return;
+        }
+        if (_mode == "存档" && amount > _balance)
+        {
+            Msg($"余额不足：需要 ${amount:N0}，当前余额 ${_balance:N0}。");
+            return;
+        }
+
+        CommitThree(amount);
+        _three.Stake *= 2;
+        _three.Rounds++;
+        _three.PlayerAction = $"加注 ${amount:N0}";
+        _three.Log = $"你加注 ${amount:N0}。";
+
+        _threeTimer?.Stop();
+        if (_threeSeatTimers.TryGetValue("你", out var me)) SeatTimer.Hide(me.Bubble);
+
+        // 电脑逐个行动（复用原来的循环）
+        ThreeRunAiTurn(2);
+    }
+
+    /// <summary>玩家行动：0 = 弃牌，1 = 跟注。</summary>
     private async void ThreePlayerBet(int action)
     {
         if (!_three.InRound || _three.PlayerFolded || _three.Finished || _aiThinking) return;
@@ -611,19 +749,38 @@ public partial class MainWindow
         _threeTimer?.Stop();
         if (_threeSeatTimers.TryGetValue("你", out var meSeat)) SeatTimer.Hide(meSeat.Bubble);
 
-        // 电脑逐个思考：只有当前这一位头顶显示倒计时，
-        // 结束后立刻在座位上标出它做了什么，不会所有气泡一起跳。
+        ThreeRunAiTurn(action);
+    }
+
+    /// <summary>
+    /// 电脑逐个行动。每位 AI 走两段式思考：
+    ///   1. 30 秒行动倒计时（表演用，让玩家看到「他还有多少时间」）
+    ///   2. 3~25 秒真实思考（到点才真正做决定，随压力增长）
+    /// 中途可能先看牌，看完重置思考时间再想一轮。
+    /// </summary>
+    private async void ThreeRunAiTurn(int action)
+    {
         foreach (var seat in _three.Seats)
         {
             if (seat.Folded) continue;
 
             ShowThreeAiThinking(seat, 4);
             await AiThink(4, _three.Stake, Tier.Max,
-                $"{seat.Name} 正在考虑是否跟注…");
+                $"{seat.Name} 正在考虑…");
             HideAllThreeTimers();
 
-            // 闷牌先看牌（真实牌局里 AI 也会先看清楚再决定）
-            if (!seat.Looked && _rng.NextDouble() < 0.75) seat.Looked = true;
+            // 闷牌先看牌（看完再想一轮）
+            if (!seat.Looked && _rng.NextDouble() < 0.7)
+            {
+                seat.Looked = true;
+                seat.LastAction = "看牌";
+                ThreePage();
+
+                ShowThreeAiThinking(seat, 4);
+                await AiThink(4, _three.Stake, Tier.Max,
+                    $"{seat.Name} 看完牌，正在盘算…");
+                HideAllThreeTimers();
+            }
 
             // 跟注额：闷牌 1 倍，看牌后 3 倍 / 2 倍
             var seatCall = !seat.Looked ? _three.Stake
