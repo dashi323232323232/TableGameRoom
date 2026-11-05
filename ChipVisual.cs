@@ -28,7 +28,8 @@ public static class ChipVisual
     /// </summary>
     public static FrameworkElement Create(int amount)
     {
-        var pile = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Height = 34 };
+        // 筹码堆整体高度从 34 缩到 26 —— 原来三摞能占掉牌桌中央一大块。
+        var pile = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, Height = 26 };
         if (amount <= 0) return pile;
 
         // 选出基准面额：从大到小找第一个「枚数合理」的
@@ -36,8 +37,8 @@ public static class ChipVisual
         foreach (var (value, _) in Denominations)
         {
             if (value > amount) continue;
-            // 用这个面额表示时，枚数不超过 30（3 摞 × 10 枚）就用它
-            if (amount / value <= 30)
+            // 用这个面额表示时，枚数不超过 20 就用它
+            if (amount / value <= 20)
             {
                 baseValue = value;
                 break;
@@ -49,7 +50,8 @@ public static class ChipVisual
         var remainder = amount % baseValue;
 
         var stackIndex = 0;
-        var visibleStacks = (int)Math.Min(3, pieces);
+        // 最多 2 摞（原来 3 摞，横向占太多）
+        var visibleStacks = (int)Math.Min(2, pieces);
         var eachCount = pieces / visibleStacks;
         var extra = pieces % visibleStacks;
 
@@ -95,11 +97,11 @@ public static class ChipVisual
 
     private static FrameworkElement MakeStack(int value, Color color, int count)
     {
-        var stack = new Grid { Width = 28, Height = 34, VerticalAlignment = VerticalAlignment.Bottom, ToolTip = $"{count} 枚 · 每枚 ${value:N0}" };
-        for (var i = Math.Min(count, 6) - 1; i >= 0; i--)
+        var stack = new Grid { Width = 22, Height = 26, VerticalAlignment = VerticalAlignment.Bottom, ToolTip = $"{count} 枚 · 每枚 ${value:N0}" };
+        for (var i = Math.Min(count, 4) - 1; i >= 0; i--)
         {
             var chip = MakeChip(value, color);
-            chip.Height = 23;
+            chip.Height = 18;
             chip.Margin = new Thickness(0, 2 + i * 1.2, 0, 0);
             chip.VerticalAlignment = VerticalAlignment.Top;
             Panel.SetZIndex(chip, i);
