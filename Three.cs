@@ -32,6 +32,9 @@ public sealed class ThreeSeat
     /// </summary>
     public bool LookDecided { get; set; }
 
+    /// <summary>看牌后已经跟过几轮（用于 3 倍 / 2 倍规则）。</summary>
+    public int CallCount { get; set; }
+
     /// <summary>本轮具体做了什么（「加注 $200」这种），显示在座位上。</summary>
     public string LastAction { get; set; } = "";
 }
@@ -657,7 +660,7 @@ public partial class MainWindow
         }
 
         CommitThree(amount);
-        _three.Stake *= 2;
+        _three.Stake = Math.Max(_three.Stake, amount);   // 全桌跟注额抬到这一注
         _three.Rounds++;
         _three.PlayerAction = $"加注 ${amount:N0}";
         _three.Log = $"你加注 ${amount:N0}。";
@@ -766,9 +769,10 @@ public partial class MainWindow
                 }
             }
 
-            // 跟注额：闷牌 1 倍，看牌后 3 倍 / 2 倍
+            // 跟注额：闷牌 1 倍，看牌后 3 倍 / 2 倍。
+            // 用 CallCount 计数，和玩家侧的 PlayerCalls 同一套逻辑。
             var seatCall = !seat.Looked ? _three.Stake
-                         : seat.Committed <= _three.Stake ? _three.Stake * 3
+                         : seat.CallCount == 0 ? _three.Stake * 3
                          : _three.Stake * 2;
 
             // 仅用自己的牌评估，不偷看玩家或其他电脑底牌
@@ -777,6 +781,7 @@ public partial class MainWindow
             {
                 seat.Committed += seatCall;
                 _three.TablePot += seatCall;
+                seat.CallCount++;
                 seat.Status = "跟注";
                 seat.LastAction = $"跟注 ${seatCall:N0}";
                 var cat = (int)(ThreeScore.Of(seat.Cards) / 1_000_000L);

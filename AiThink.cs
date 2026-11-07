@@ -83,12 +83,23 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 真实思考时间：3~30 秒，压力越大越久。
-    /// 上限取 30 和行动倒计时对齐，思考不会比倒计时还长。
+    /// 真实思考时间 —— 前期快、后期慢，偶尔「灵机一动」秒出。
+    ///
+    /// 节奏设计（模拟真人）：
+    ///   · 前两轮：2~8 秒
+    ///   · 中期：8~18 秒
+    ///   · 后期：18~30 秒
+    ///   · 任意阶段都有 15% 概率「灵机一动」：1~2 秒立刻决定
+    ///
+    /// 压力 = 轮次进度 60% + 注额相对档位上限 40%，被加注再 +0.15。
     /// </summary>
     private static int RollThinkSeconds(int stage, int stake, int? tierMax, bool pressured)
     {
-        var roundPressure = Math.Clamp(stage / 6.0, 0, 1);
+        // ---------- 灵机一动：偶尔秒出 ----------
+        if (Random.Shared.NextDouble() < 0.15)
+            return Random.Shared.Next(1, 3);
+
+        var roundPressure = Math.Clamp(stage / 5.0, 0, 1);
 
         double stakePressure;
         if (tierMax is > 0)
@@ -96,16 +107,17 @@ public partial class MainWindow
         else
             stakePressure = stake <= 0 ? 0 : Math.Clamp(Math.Log10(stake) / 6.0, 0, 1);
 
-        var pressure = roundPressure * 0.5 + stakePressure * 0.5;
-        if (pressured) pressure = Math.Min(1, pressure + 0.2);
+        var pressure = roundPressure * 0.6 + stakePressure * 0.4;
+        if (pressured) pressure = Math.Min(1, pressure + 0.15);
 
-        // 3 秒打底，最高 30 秒
-        var seconds = 3 + (30 - 3) * pressure;
+        // 平方曲线让前期更平
+        var eased = pressure * pressure;
+        var seconds = 2 + (30 - 2) * eased;
 
-        // ±25% 随机波动
-        seconds *= 0.75 + Random.Shared.NextDouble() * 0.5;
+        // ±20% 随机波动
+        seconds *= 0.8 + Random.Shared.NextDouble() * 0.4;
 
-        return (int)Math.Clamp(Math.Round(seconds), 3, 30);
+        return (int)Math.Clamp(Math.Round(seconds), 2, 30);
     }
 
     /// <summary>
