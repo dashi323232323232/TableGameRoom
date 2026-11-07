@@ -8,7 +8,14 @@ namespace TableGameRoom;
 public sealed class ThreeSeat
 {
     public string Name { get; init; } = "";
-    public string Emoji { get; set; } = "😐";
+
+    /// <summary>当前表情，由 MoodEngine 按牌局状态计算，不再用 emoji 字符。</summary>
+    public AvatarVisual.Mood Mood { get; set; } = AvatarVisual.Mood.Neutral;
+
+    /// <summary>刚比赢 / 比输（表情优先级最高）。</summary>
+    public bool JustWon { get; set; }
+    public bool JustLost { get; set; }
+
     public string Status { get; set; } = "等待";
     public List<Card> Cards { get; } = [];
     public int Committed { get; set; }
@@ -78,10 +85,46 @@ public partial class MainWindow
     /// <summary>驱动「当前行动电脑」的逐秒倒计时（同时只有一个在跑）。</summary>
     private SeatTimerDriver? _threeAiTimer;
 
+    /// <summary>
+    /// 按当前牌局状态刷新所有 AI 的表情。
+    /// 玩家自己没有表情 —— 表情只用于表现 AI 的处境。
+    /// </summary>
+    private void RefreshThreeMoods()
+    {
+        var tierStrength = AiTuning.Strength(_tierIndex);
+
+        // 全局压力：轮次进度 + 底池相对档位上限
+        var roundPressure = Math.Clamp(_three.Rounds / 5.0, 0, 1);
+        double potPressure;
+        if (Tier.Max is > 0)
+            potPressure = Math.Clamp(_three.TablePot / (Tier.Max.Value * 4.0), 0, 1);
+        else
+            potPressure = 0.5;
+
+        foreach (var s in _three.Seats)
+        {
+            var score = ThreeScore.Of(s.Cards);
+            var category = s.Cards.Count >= 3 ? (int)(score / 1_000_000L) : 0;
+
+            var seatPressure = Math.Clamp(
+                roundPressure * 0.4 + potPressure * 0.3 + (s.Committed > _three.Stake ? 0.3 : 0), 0, 1);
+
+            s.Mood = MoodEngine.ForThree(
+                category, tierStrength, seatPressure,
+                s.Folded, s.JustWon, s.JustLost, s.Looked, _rng);
+
+            s.JustWon = false;
+            s.JustLost = false;
+        }
+    }
+
     private void ThreePage()
     {
         Base("炸金花");
         Header();
+
+        // 先按当前牌局状态刷新所有 AI 的表情
+        RefreshThreeMoods();
 
         var players = _people == "双人桌" ? 2 : Math.Clamp(_seats, 3, 7);
         _three.ChipStack = _three.TablePot <= 0 ? 0 : Math.Clamp((int)Math.Ceiling(_three.TablePot / 100.0), 1, 24);
@@ -115,7 +158,7 @@ public partial class MainWindow
         canvas.Children.Add(inner);
 
         var shown = _three.Seats.Count == 0
-            ? Enumerable.Range(0, players - 1).Select(i => new ThreeSeat { Name = $"电脑 {i + 1}", Emoji = "😐", Status = "等待开局", EffectiveTier = _tierIndex + 1 }).ToList()
+            ? Enumerable.Range(0, players - 1).Select(i => new ThreeSeat { Name = $"电脑 {i + 1}", Mood = AvatarVisual.Mood.Neutral, Status = "等待开局", EffectiveTier = _tierIndex + 1 }).ToList()
             : _three.Seats;
         var pos = TableRing.ComputerPositions(shown.Count);
         const double seatW = TableRing.SeatWidth;
@@ -125,7 +168,7 @@ public partial class MainWindow
             var seat = shown[i];
             Border v;
             if (_three.Seats.Count == 0)
-                v = ThreeSeatView(seat.Name, seat.Emoji, [], false, seat.Status, 0, seat.EffectiveTier);
+                v = ThreeSeatView(seat.Name, seat.Mood, [], false, seat.Status, 0, seat.EffectiveTier);
             else
             {
                 var hide = false;
@@ -135,7 +178,7 @@ public partial class MainWindow
                 // 观战中活跃AI亮牌更直观
                 if (_three.Spectating && !seat.Folded) hide = false;
                 if (_three.Finished) hide = !seat.Revealed;
-                v = ThreeSeatView(seat.Name, seat.Emoji, seat.Cards, hide,
+                v = ThreeSeatView(seat.Name, seat.Mood, seat.Cards, hide,
                     seat.Folded ? "已弃牌" : seat.Status, seat.Committed, seat.EffectiveTier,
                     seat.Looked, seat.Folded, seat.LastAction, i);
                 if (seat.Folded) v.Opacity = 0.72;
@@ -151,7 +194,8 @@ public partial class MainWindow
         if (_three.PlayerFolded && !_three.Finished) playerHide = true;
         var playerStatus = _three.PlayerFolded ? "已弃牌·观战中" : _three.Seen ? $"已看牌 · {(_three.Player.Count == 3 ? ThreeScore.Name(ThreeScore.Of(_three.Player)) : "—")}" : "未看牌";
         var playerSeat = ThreeSeatView(_three.PlayerFolded ? "你（观战）" : "你",
-            _three.PlayerFolded ? "🚫" : _three.Seen ? "😄" : "😐",
+            // 玩家自己不带表情 —— 表情只用于表现 AI 的处境
+            AvatarVisual.Mood.Neutral,
             _three.Player, playerHide, playerStatus, _three.PlayerCommitted, 0,
             _three.Seen, _three.PlayerFolded, _three.PlayerAction);
         playerSeat.Width = seatW;
@@ -291,7 +335,7 @@ public partial class MainWindow
             if (_threeSeatTimers.TryGetValue(s.Name, out var b)) SeatTimer.Hide(b.Bubble);
     }
 
-    private Border ThreeSeatView(string name, string emoji, IReadOnlyList<Card> cards, bool hidden, string status, int committed, double effTier = 0, bool looked = false, bool folded = false, string lastAction = "", int seatIndex = 0)
+    private Border ThreeSeatView(string name, AvatarVisual.Mood mood, IReadOnlyList<Card> cards, bool hidden, string status, int committed, double effTier = 0, bool looked = false, bool folded = false, string lastAction = "", int seatIndex = 0)
     {
         var stack = new StackPanel { Margin = new Thickness(2), HorizontalAlignment = HorizontalAlignment.Center };
         // 头顶双计时气泡（行动倒计时 + 真实思考）
@@ -302,7 +346,7 @@ public partial class MainWindow
         // ---------- 头像 + 名字（横排） ----------
         var head = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
 
-        var avatar = AvatarVisual.Create(emoji, seatIndex, name == "你", 22);
+        var avatar = AvatarVisual.Create(mood, seatIndex, name == "你", 22);
         avatar.Margin = new Thickness(0, 0, 4, 0);
         head.Children.Add(avatar);
 
@@ -315,7 +359,7 @@ public partial class MainWindow
         head.Children.Add(nameText);
 
         // 悬停显示完整信息
-        var fullName = $"{name}{tierLabel}\n表情：{AvatarVisual.MoodLabel(AvatarVisual.FromEmoji(emoji))}";
+        var fullName = $"{name}{tierLabel}\n表情：{AvatarVisual.MoodLabel(mood)}";
         if (looked) fullName += "\n状态：已看牌";
         else if (!folded && cards.Count > 0) fullName += "\n状态：未看牌（闷牌）";
         if (committed > 0) fullName += $"\n累计下注：${committed:N0}";
@@ -421,7 +465,8 @@ public partial class MainWindow
             _three.Seats.Add(new ThreeSeat
             {
                 Name = $"电脑 {i + 1}",
-                Emoji = Emojis[_rng.Next(Emojis.Length)],
+                // 开局平静，之后由 RefreshThreeMoods() 按真实牌局状态更新
+                Mood = AvatarVisual.Mood.Neutral,
                 EffectiveTier = Math.Round(eff, 1),
                 PressureResistance = AiTuning.PressureResistance(effIndex),
                 RiskTolerance = AiTuning.RiskTolerance(effIndex),
@@ -784,8 +829,6 @@ public partial class MainWindow
                 seat.CallCount++;
                 seat.Status = "跟注";
                 seat.LastAction = $"跟注 ${seatCall:N0}";
-                var cat = (int)(ThreeScore.Of(seat.Cards) / 1_000_000L);
-                seat.Emoji = cat >= 3 ? "😄" : cat == 0 ? "😐" : "😞";
                 _three.Log += $" {seat.Name}({seat.EffectiveTier:0.0}) 跟注 ${seatCall:N0}。";
             }
             else
@@ -793,7 +836,6 @@ public partial class MainWindow
                 seat.Folded = true;
                 seat.Status = "弃牌";
                 seat.LastAction = "已弃牌";
-                seat.Emoji = "😞";
                 _three.Log += $" {seat.Name}({seat.EffectiveTier:0.0}) 弃牌。";
             }
 
@@ -843,7 +885,6 @@ public partial class MainWindow
             {
                 seat.Folded = true;
                 seat.Status = "弃牌";
-                seat.Emoji = "😞";
                 _three.Log += $" {seat.Name}({seat.EffectiveTier:0.0}) 弃牌。";
             }
         }
@@ -966,7 +1007,7 @@ public partial class MainWindow
         {
             target.Folded = true;
             target.Status = "比牌失败";
-            target.Emoji = "😠";
+            target.JustLost = true;
             _three.Log = $"比牌：你 {ThreeScore.Name(mine)} 对 {target.Name}({target.EffectiveTier:0.0}) {ThreeScore.Name(theirs)}，你获胜，{target.Name} 出局。剩余 {string.Join(" ", _three.Seats.Where(s=>!s.Folded).Select(s=>$"{s.Name}({s.EffectiveTier:0.0})"))}。";
             if (_three.Seats.All(s => s.Folded))
             {
