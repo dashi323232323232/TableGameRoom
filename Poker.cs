@@ -8,7 +8,14 @@ namespace TableGameRoom;
 public sealed class PokerSeat
 {
     public string Name { get; init; } = "";
-    public string Emoji { get; set; } = "😐";
+
+    /// <summary>当前表情，由 MoodEngine 按牌局状态计算，不再用 emoji 字符。</summary>
+    public AvatarVisual.Mood Mood { get; set; } = AvatarVisual.Mood.Neutral;
+
+    /// <summary>刚赢 / 刚输（表情优先级最高）。</summary>
+    public bool JustWon { get; set; }
+    public bool JustLost { get; set; }
+
     public string Status { get; set; } = "等待";
     public List<Card> Cards { get; } = [];
     public int Committed { get; set; }
@@ -48,13 +55,51 @@ public partial class MainWindow
     private readonly Dictionary<string, (Border Bubble, TextBlock Text)> _pokerSeatTimers = [];
     private SeatTimerDriver? _pokerTimer;
 
-    private static readonly string[] Emojis = ["😐", "😄", "😞", "😠"];
     private static readonly string[] StageNames = ["翻牌前", "翻牌", "转牌", "河牌摊牌"];
+
+    /// <summary>
+    /// 按当前牌局状态刷新所有 AI 的表情。
+    /// 玩家自己没有表情 —— 表情只用于表现 AI 的处境。
+    /// </summary>
+    private void RefreshPokerMoods()
+    {
+        var tierStrength = AiTuning.Strength(_tierIndex);
+
+        foreach (var s in _poker.Seats)
+        {
+            var category = 0;
+            var equity = 0.5;
+
+            if (s.Cards.Count >= 2 && _poker.Community.Count >= 3)
+            {
+                var all = s.Cards.Concat(_poker.Community).ToArray();
+                var score = FastPokerScore.Best(all);
+                category = (int)(score / 100_000_000_000L);
+                equity = category / 8.0;
+            }
+            else if (s.Cards.Count >= 2)
+            {
+                // 翻牌前：看底牌大小
+                var high = s.Cards.Max(c => c.Rank);
+                equity = (high - 2) / 12.0 * 0.6;
+            }
+
+            s.Mood = MoodEngine.ForPoker(
+                category, equity, tierStrength,
+                s.Folded, s.JustWon, s.JustLost, _rng);
+
+            s.JustWon = false;
+            s.JustLost = false;
+        }
+    }
 
     private void PokerPage()
     {
         Base("德州扑克");
         Header();
+
+        // 先按当前牌局状态刷新所有 AI 的表情
+        RefreshPokerMoods();
 
         var players = _people == "双人桌" ? 2 : Math.Clamp(_seats, 3, 7);
         var stageText = StageNames[Math.Clamp(_poker.Stage, 0, 3)];
@@ -89,7 +134,7 @@ public partial class MainWindow
         canvas.Children.Add(inner);
 
         var shownSeats = _poker.Seats.Count == 0
-            ? Enumerable.Range(0, players - 1).Select(i => new PokerSeat { Name = $"电脑 {i + 1}", Emoji = "😐", Status = "等待开局", EffectiveTier = _tierIndex + 1 }).ToList()
+            ? Enumerable.Range(0, players - 1).Select(i => new PokerSeat { Name = $"电脑 {i + 1}", Mood = AvatarVisual.Mood.Neutral, Status = "等待开局", EffectiveTier = _tierIndex + 1 }).ToList()
             : _poker.Seats;
 
         var pos = TableRing.ComputerPositions(shownSeats.Count);
@@ -222,7 +267,29 @@ public partial class MainWindow
         var bubble = SeatTimer.Create(out var bubbleText);
         stack.Children.Add(bubble);
 
-        stack.Children.Add(T($"{seat.Name}{tierLabel} {seat.Emoji}", 11));
+        // ---------- 头像 + 名字（横排） ----------
+        // 表情由 MoodEngine 按真实牌局状态算出（牌力 / 胜率 / 刚摊牌的结果）。
+        var head = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+
+        var avatar = AvatarVisual.Create(seat.Mood, 0, false, 22);
+        avatar.Margin = new Thickness(0, 0, 4, 0);
+        head.Children.Add(avatar);
+
+        var shortName = seat.Name.Length <= 5 ? seat.Name : seat.Name[..5] + "…";
+        var nameText = T($"{shortName}{tierLabel}", 11);
+        nameText.VerticalAlignment = VerticalAlignment.Center;
+        head.Children.Add(nameText);
+
+        // 悬停看完整信息
+        var fullName = $"{seat.Name}{tierLabel}\n表情：{AvatarVisual.MoodLabel(seat.Mood)}";
+        if (seat.Committed > 0) fullName += $"\n累计下注：${seat.Committed:N0}";
+        if (seat.Folded) fullName += "\n已弃牌";
+        head.ToolTip = fullName;
+        nameText.ToolTip = fullName;
+        avatar.ToolTip = fullName;
+
+        stack.Children.Add(head);
+
         var hide = !_poker.Showdown && (!_poker.Spectating || seat.Folded);
         stack.Children.Add(CardRow(seat.Cards, hidden: hide, compact: true));
         stack.Children.Add(T(seat.Folded ? "已弃牌" : $"{seat.Status} · ${seat.Committed:N0}", 9, Muted));
@@ -341,7 +408,8 @@ public partial class MainWindow
             _poker.Seats.Add(new PokerSeat
             {
                 Name = $"电脑 {i + 1}",
-                Emoji = Emojis[_rng.Next(Emojis.Length)],
+                // 开局平静，之后由 RefreshPokerMoods() 按真实牌局状态更新
+                Mood = AvatarVisual.Mood.Neutral,
                 EffectiveTier = Math.Round(eff, 1),
                 PressureResistance = AiTuning.PressureResistance((int)Math.Round(effIndex)),
                 RiskTolerance = AiTuning.RiskTolerance((int)Math.Round(effIndex)),
@@ -448,7 +516,6 @@ public partial class MainWindow
             {
                 seat.Folded = true;
                 seat.Status = "弃牌";
-                seat.Emoji = "😞";
                 continue;
             }
 
@@ -461,7 +528,6 @@ public partial class MainWindow
             _poker.TablePot += put;
             if (raise) _poker.Stake = Math.Max(_poker.Stake, put);
             seat.Status = raise ? "加注" : "跟注";
-            seat.Emoji = raise ? "😄" : "😐";
             _poker.Log += $" {seat.Name} {(raise ? "加注" : "跟注")} ${put:N0}。";
         }
 
@@ -667,7 +733,6 @@ public partial class MainWindow
             {
                 seat.Folded = true;
                 seat.Status = "弃牌";
-                seat.Emoji = "😞";
                 _poker.Log += $" {seat.Name} 弃牌。";
                 continue;
             }
@@ -680,7 +745,6 @@ public partial class MainWindow
             _poker.TablePot += put;
             if (raise) _poker.Stake = Math.Max(_poker.Stake, put);
             seat.Status = raise ? "加注" : "跟注";
-            seat.Emoji = raise ? "😄" : "😐";
             _poker.Log += $" {seat.Name} {(raise ? "加注" : "跟注")} ${put:N0}。";
         }
         var activeAfter = _poker.Seats.Count(s => !s.Folded);
